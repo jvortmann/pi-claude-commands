@@ -11,7 +11,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { globSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 
 interface CommandFile {
@@ -107,15 +107,38 @@ export function resolveCommandDirs(sources: CommandDirSource[]): ResolvedCommand
 
     for (const { settingsPath, baseDir, scope } of sources) {
         for (const dir of parseCommandDirs(settingsPath)) {
-            const resolved = resolve(baseDir, dir);
-            if (!seen.has(resolved)) {
-                seen.add(resolved);
-                result.push({ path: resolved, scope });
+            for (const resolved of expandCommandDir(baseDir, dir)) {
+                if (!seen.has(resolved)) {
+                    seen.add(resolved);
+                    result.push({ path: resolved, scope });
+                }
             }
         }
     }
 
     return result;
+}
+
+const GLOB_MAGIC = /[*?[\]{}]/;
+
+function expandCommandDir(baseDir: string, dir: string): string[] {
+    if (!GLOB_MAGIC.test(dir)) return [resolve(baseDir, dir)];
+
+    // Node skips symlinked directories while expanding "**" unless told otherwise, which would
+    // silently drop symlinked plugin folders. Bun follows them either way.
+    const matches = globSync(dir, { cwd: baseDir, followSymlinks: true });
+    return matches
+        .map((match) => resolve(baseDir, match))
+        .filter(isDirectory)
+        .sort();
+}
+
+function isDirectory(path: string): boolean {
+    try {
+        return statSync(path).isDirectory();
+    } catch {
+        return false;
+    }
 }
 
 export default function (pi: ExtensionAPI) {

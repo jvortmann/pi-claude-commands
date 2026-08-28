@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseFrontmatter, discoverCommands, parseCommandDirs, resolveCommandDirs } from "../index";
@@ -157,6 +157,90 @@ describe("resolveCommandDirs", () => {
         ]);
 
         assert.deepEqual(dirs, [{ path: join(tmpDir, "commands"), scope: "project" }]);
+    });
+
+    it("expands a wildcard segment into each matching command directory", () => {
+        const projectDir = join(tmpDir, "project");
+        const settingsPath = join(projectDir, ".pi", "settings.json");
+        mkdirSync(join(projectDir, "plugins", "alpha", "commands"), { recursive: true });
+        mkdirSync(join(projectDir, "plugins", "beta", "commands"), { recursive: true });
+        mkdirSync(join(projectDir, ".pi"), { recursive: true });
+        writeFileSync(settingsPath, JSON.stringify({ commands: ["plugins/*/commands"] }));
+
+        const dirs = resolveCommandDirs([{ settingsPath, baseDir: projectDir, scope: "project" }]);
+
+        assert.deepEqual(dirs, [
+            { path: join(projectDir, "plugins", "alpha", "commands"), scope: "project" },
+            { path: join(projectDir, "plugins", "beta", "commands"), scope: "project" },
+        ]);
+    });
+
+    it("expands a recursive wildcard across nesting levels", () => {
+        const projectDir = join(tmpDir, "project");
+        const settingsPath = join(projectDir, ".pi", "settings.json");
+        mkdirSync(join(projectDir, "plugins", "commands"), { recursive: true });
+        mkdirSync(join(projectDir, "plugins", "alpha", "commands"), { recursive: true });
+        mkdirSync(join(projectDir, "plugins", "group", "beta", "commands"), { recursive: true });
+        mkdirSync(join(projectDir, ".pi"), { recursive: true });
+        writeFileSync(settingsPath, JSON.stringify({ commands: ["plugins/**/commands"] }));
+
+        const dirs = resolveCommandDirs([{ settingsPath, baseDir: projectDir, scope: "project" }]);
+
+        assert.deepEqual(dirs, [
+            { path: join(projectDir, "plugins", "alpha", "commands"), scope: "project" },
+            { path: join(projectDir, "plugins", "commands"), scope: "project" },
+            { path: join(projectDir, "plugins", "group", "beta", "commands"), scope: "project" },
+        ]);
+    });
+
+    it("ignores glob matches that are files rather than directories", () => {
+        const projectDir = join(tmpDir, "project");
+        const settingsPath = join(projectDir, ".pi", "settings.json");
+        mkdirSync(join(projectDir, "plugins", "alpha", "commands"), { recursive: true });
+        mkdirSync(join(projectDir, "plugins", "beta"), { recursive: true });
+        writeFileSync(join(projectDir, "plugins", "beta", "commands"), "not a directory");
+        mkdirSync(join(projectDir, ".pi"), { recursive: true });
+        writeFileSync(settingsPath, JSON.stringify({ commands: ["plugins/*/commands"] }));
+
+        const dirs = resolveCommandDirs([{ settingsPath, baseDir: projectDir, scope: "project" }]);
+
+        assert.deepEqual(dirs, [{ path: join(projectDir, "plugins", "alpha", "commands"), scope: "project" }]);
+    });
+
+    it("expands through symlinked plugin directories", () => {
+        const projectDir = join(tmpDir, "project");
+        const settingsPath = join(projectDir, ".pi", "settings.json");
+        const externalPlugin = join(tmpDir, "external", "shared");
+        mkdirSync(join(externalPlugin, "commands"), { recursive: true });
+        mkdirSync(join(projectDir, "plugins"), { recursive: true });
+        symlinkSync(externalPlugin, join(projectDir, "plugins", "shared"));
+        mkdirSync(join(projectDir, ".pi"), { recursive: true });
+        writeFileSync(settingsPath, JSON.stringify({ commands: ["plugins/**/commands"] }));
+
+        const dirs = resolveCommandDirs([{ settingsPath, baseDir: projectDir, scope: "project" }]);
+
+        assert.deepEqual(dirs, [{ path: join(projectDir, "plugins", "shared", "commands"), scope: "project" }]);
+    });
+
+    it("keeps the first scope when a glob match repeats a literal path", () => {
+        const projectDir = join(tmpDir, "project");
+        const globalSettings = join(tmpDir, "global-settings.json");
+        const projectSettings = join(projectDir, ".pi", "settings.json");
+        mkdirSync(join(projectDir, "plugins", "alpha", "commands"), { recursive: true });
+        mkdirSync(join(projectDir, "plugins", "beta", "commands"), { recursive: true });
+        mkdirSync(join(projectDir, ".pi"), { recursive: true });
+        writeFileSync(globalSettings, JSON.stringify({ commands: ["plugins/alpha/commands"] }));
+        writeFileSync(projectSettings, JSON.stringify({ commands: ["plugins/*/commands"] }));
+
+        const dirs = resolveCommandDirs([
+            { settingsPath: globalSettings, baseDir: projectDir, scope: "global" },
+            { settingsPath: projectSettings, baseDir: projectDir, scope: "project" },
+        ]);
+
+        assert.deepEqual(dirs, [
+            { path: join(projectDir, "plugins", "alpha", "commands"), scope: "global" },
+            { path: join(projectDir, "plugins", "beta", "commands"), scope: "project" },
+        ]);
     });
 
     it("deduplicates identical resolved paths", () => {

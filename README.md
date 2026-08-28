@@ -34,6 +34,22 @@ Multiple directories are supported:
 }
 ```
 
+### Glob patterns
+
+Entries containing `*`, `?`, `[]` or `{}` expand to every matching directory, which is handy for
+plugin layouts where each plugin ships its own commands folder:
+
+```json
+{
+    "commands": ["plugins/*/commands", "skills-playground/plugins/**/commands"]
+}
+```
+
+`**` matches any depth, including none — `plugins/**/commands` also matches `plugins/commands`.
+Symlinked directories are followed, matches that are not directories are ignored, and a pattern
+that matches nothing is simply skipped. Directories are rescanned on `/reload` and whenever a
+session starts or resumes, so plugins added mid-session show up after a reload.
+
 ## Command format
 
 Command files use the same format as Claude Code — markdown with optional frontmatter:
