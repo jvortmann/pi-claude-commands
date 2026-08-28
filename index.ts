@@ -12,6 +12,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { globSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 
 interface CommandFile {
@@ -121,7 +122,8 @@ export function resolveCommandDirs(sources: CommandDirSource[]): ResolvedCommand
 
 const GLOB_MAGIC = /[*?[\]{}]/;
 
-function expandCommandDir(baseDir: string, dir: string): string[] {
+function expandCommandDir(baseDir: string, configuredDir: string): string[] {
+    const dir = expandTilde(configuredDir);
     if (!GLOB_MAGIC.test(dir)) return [resolve(baseDir, dir)];
 
     // Node skips symlinked directories while expanding "**" unless told otherwise, which would
@@ -131,6 +133,12 @@ function expandCommandDir(baseDir: string, dir: string): string[] {
         .map((match) => resolve(baseDir, match))
         .filter(isDirectory)
         .sort();
+}
+
+function expandTilde(dir: string): string {
+    if (dir !== "~" && !dir.startsWith("~/")) return dir;
+    const home = process.env.HOME ?? homedir();
+    return dir === "~" ? home : join(home, dir.slice(2));
 }
 
 function isDirectory(path: string): boolean {

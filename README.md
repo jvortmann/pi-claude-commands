@@ -34,6 +34,12 @@ Multiple directories are supported:
 }
 ```
 
+### Path resolution
+
+Relative entries resolve against your project root, or against the agent directory for entries in
+the global `settings.json`. Absolute paths, parent-relative paths such as `../sibling-repo/commands`
+and a leading `~` are all supported.
+
 ### Glob patterns
 
 Entries containing `*`, `?`, `[]` or `{}` expand to every matching directory, which is handy for
