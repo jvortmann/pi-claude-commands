@@ -149,32 +149,42 @@ function isDirectory(path: string): boolean {
     }
 }
 
+/** Everything a registration pass needs from pi, kept narrow so tests can drive it. */
+type CommandRegistrar = Pick<ExtensionAPI, "registerCommand" | "sendUserMessage">;
+
+/**
+ * Scan the configured directories and register what is on disk right now. Runs on every discovery
+ * pass so files added, changed or removed during a session are picked up by /reload and by session
+ * restarts.
+ */
+export function registerCommands(pi: CommandRegistrar, options: { cwd: string; agentDir: string }): void {
+    const { cwd, agentDir } = options;
+    const sources: CommandDirSource[] = [
+        { settingsPath: join(agentDir, "settings.json"), baseDir: agentDir, scope: "global" },
+        { settingsPath: join(cwd, ".pi", "settings.json"), baseDir: cwd, scope: "project" },
+    ];
+
+    for (const { path: dir, scope } of resolveCommandDirs(sources)) {
+        const tag = scope === "global" ? "[g]" : "[p]";
+
+        for (const cmd of discoverCommands(dir, dir, "")) {
+            const fallback = `Claude command: ${cmd.name}`;
+            pi.registerCommand(cmd.name, {
+                description: `${tag} ${cmd.description || fallback}`,
+                handler: async (args) => {
+                    const content = readFileSync(cmd.path, "utf8");
+                    const { body } = parseFrontmatter(content);
+                    const prompt = args ? `${body}\n\nUser: ${args}` : body;
+                    pi.sendUserMessage(prompt);
+                },
+            });
+        }
+    }
+}
+
 export default function (pi: ExtensionAPI) {
     pi.on("resources_discover", async (event) => {
         const { getAgentDir } = await import("@mariozechner/pi-coding-agent");
-        const agentDir = getAgentDir();
-        const sources: CommandDirSource[] = [
-            { settingsPath: join(agentDir, "settings.json"), baseDir: agentDir, scope: "global" },
-            { settingsPath: join(event.cwd, ".pi", "settings.json"), baseDir: event.cwd, scope: "project" },
-        ];
-        const commandDirs = resolveCommandDirs(sources);
-
-        for (const { path: dir, scope } of commandDirs) {
-            const commands = discoverCommands(dir, dir, "");
-            const tag = scope === "global" ? "[g]" : "[p]";
-
-            for (const cmd of commands) {
-                const fallback = `Claude command: ${cmd.name}`;
-                pi.registerCommand(cmd.name, {
-                    description: `${tag} ${cmd.description || fallback}`,
-                    handler: async (args, ctx) => {
-                        const content = readFileSync(cmd.path, "utf8");
-                        const { body } = parseFrontmatter(content);
-                        const prompt = args ? `${body}\n\nUser: ${args}` : body;
-                        pi.sendUserMessage(prompt);
-                    },
-                });
-            }
-        }
+        registerCommands(pi, { cwd: event.cwd, agentDir: getAgentDir() });
     });
 }

@@ -3,7 +3,21 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseFrontmatter, discoverCommands, parseCommandDirs, resolveCommandDirs } from "../index";
+import { parseFrontmatter, discoverCommands, parseCommandDirs, resolveCommandDirs, registerCommands } from "../index";
+
+/** Mirrors how pi stores extension commands: a map keyed by command name. */
+function createCommandRegistry() {
+    const commands = new Map<string, { description: string; handler: (args: string, ctx: unknown) => unknown }>();
+    return {
+        commands,
+        registerCommand(name: string, options: any) {
+            commands.set(name, options);
+        },
+        names() {
+            return [...commands.keys()].sort();
+        },
+    };
+}
 
 describe("parseFrontmatter", () => {
     it("parses description and body from valid frontmatter", () => {
@@ -77,6 +91,72 @@ describe("discoverCommands", () => {
 
         assert.equal(commands.length, 1);
         assert.equal(commands[0].name, "deploy");
+    });
+});
+
+describe("registerCommands", () => {
+    let tmpDir: string;
+    let agentDir: string;
+    let projectDir: string;
+    let commandsDir: string;
+
+    beforeEach(() => {
+        tmpDir = mkdtempSync(join(tmpdir(), "pi-claude-cmds-"));
+        agentDir = join(tmpDir, "agent");
+        projectDir = join(tmpDir, "project");
+        commandsDir = join(projectDir, ".claude", "commands");
+        mkdirSync(agentDir, { recursive: true });
+        mkdirSync(commandsDir, { recursive: true });
+        mkdirSync(join(projectDir, ".pi"), { recursive: true });
+        writeFileSync(join(agentDir, "settings.json"), JSON.stringify({}));
+        writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ commands: [".claude/commands"] }));
+        writeFileSync(join(commandsDir, "one.md"), "---\ndescription: First\n---\nBody one\n");
+    });
+
+    afterEach(() => {
+        rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("picks up a command file created after the previous pass", () => {
+        const pi = createCommandRegistry();
+
+        registerCommands(pi, { cwd: projectDir, agentDir });
+        assert.deepEqual(pi.names(), ["one"]);
+
+        writeFileSync(join(commandsDir, "two.md"), "---\ndescription: Second\n---\nBody two\n");
+        registerCommands(pi, { cwd: projectDir, agentDir });
+
+        assert.deepEqual(pi.names(), ["one", "two"]);
+    });
+
+    it("re-registers a command whose description changed since the previous pass", () => {
+        const pi = createCommandRegistry();
+
+        registerCommands(pi, { cwd: projectDir, agentDir });
+        assert.equal(pi.commands.get("one")?.description, "[p] First");
+
+        writeFileSync(join(commandsDir, "one.md"), "---\ndescription: Renamed\n---\nBody one\n");
+        registerCommands(pi, { cwd: projectDir, agentDir });
+
+        assert.equal(pi.commands.get("one")?.description, "[p] Renamed");
+    });
+
+    it("honors a command directory added to settings since the previous pass", () => {
+        const pi = createCommandRegistry();
+        const extraDir = join(projectDir, ".team", "commands");
+        mkdirSync(extraDir, { recursive: true });
+        writeFileSync(join(extraDir, "deploy.md"), "---\ndescription: Deploy\n---\nBody deploy\n");
+
+        registerCommands(pi, { cwd: projectDir, agentDir });
+        assert.deepEqual(pi.names(), ["one"]);
+
+        writeFileSync(
+            join(projectDir, ".pi", "settings.json"),
+            JSON.stringify({ commands: [".claude/commands", ".team/commands"] }),
+        );
+        registerCommands(pi, { cwd: projectDir, agentDir });
+
+        assert.deepEqual(pi.names(), ["deploy", "one"]);
     });
 });
 
