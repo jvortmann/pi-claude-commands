@@ -182,9 +182,22 @@ export function registerCommands(pi: CommandRegistrar, options: { cwd: string; a
     }
 }
 
-export default function (pi: ExtensionAPI) {
+/**
+ * Refresh on both events: pi re-emits "resources_discover" on /reload and on session switches, and
+ * "session_start" covers any host that starts a session without a discovery pass.
+ */
+export function activate(pi: ExtensionAPI, resolveAgentDir: () => string | Promise<string>): void {
+    const refresh = async (cwd: string) => registerCommands(pi, { cwd, agentDir: await resolveAgentDir() });
+
     pi.on("resources_discover", async (event) => {
-        const { getAgentDir } = await import("@mariozechner/pi-coding-agent");
-        registerCommands(pi, { cwd: event.cwd, agentDir: getAgentDir() });
+        await refresh(event.cwd);
     });
+
+    pi.on("session_start", async (_event, ctx) => {
+        await refresh(ctx.cwd);
+    });
+}
+
+export default function (pi: ExtensionAPI) {
+    activate(pi, async () => (await import("@mariozechner/pi-coding-agent")).getAgentDir());
 }

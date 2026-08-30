@@ -3,18 +3,43 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseFrontmatter, discoverCommands, parseCommandDirs, resolveCommandDirs, registerCommands } from "../index";
+import {
+    parseFrontmatter,
+    discoverCommands,
+    parseCommandDirs,
+    resolveCommandDirs,
+    registerCommands,
+    activate,
+} from "../index";
 
 /** Mirrors how pi stores extension commands: a map keyed by command name. */
 function createCommandRegistry() {
     const commands = new Map<string, { description: string; handler: (args: string, ctx: unknown) => unknown }>();
+    const registrations: string[] = [];
     return {
         commands,
+        registrations,
         registerCommand(name: string, options: any) {
+            registrations.push(name);
             commands.set(name, options);
         },
         names() {
             return [...commands.keys()].sort();
+        },
+    };
+}
+
+/** Fake ExtensionAPI that records subscriptions so tests can fire pi's lifecycle events. */
+function createFakePi() {
+    const handlers = new Map<string, ((event: any, ctx: any) => unknown)[]>();
+    return {
+        ...createCommandRegistry(),
+        sendUserMessage() {},
+        on(event: string, handler: (event: any, ctx: any) => unknown) {
+            handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+        },
+        async emit(event: string, payload: unknown, ctx: unknown) {
+            for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
         },
     };
 }
@@ -157,6 +182,59 @@ describe("registerCommands", () => {
         registerCommands(pi, { cwd: projectDir, agentDir });
 
         assert.deepEqual(pi.names(), ["deploy", "one"]);
+    });
+});
+
+describe("extension activation", () => {
+    let tmpDir: string;
+    let agentDir: string;
+    let projectDir: string;
+    let commandsDir: string;
+
+    beforeEach(() => {
+        tmpDir = mkdtempSync(join(tmpdir(), "pi-claude-cmds-"));
+        agentDir = join(tmpDir, "agent");
+        projectDir = join(tmpDir, "project");
+        commandsDir = join(projectDir, ".claude", "commands");
+        mkdirSync(agentDir, { recursive: true });
+        mkdirSync(commandsDir, { recursive: true });
+        mkdirSync(join(projectDir, ".pi"), { recursive: true });
+        writeFileSync(join(agentDir, "settings.json"), JSON.stringify({}));
+        writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ commands: [".claude/commands"] }));
+        writeFileSync(join(commandsDir, "one.md"), "---\ndescription: First\n---\nBody one\n");
+    });
+
+    afterEach(() => {
+        rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("registers commands when a session starts", async () => {
+        const pi = createFakePi();
+        activate(pi, () => agentDir);
+
+        await pi.emit("session_start", { type: "session_start", reason: "resume" }, { cwd: projectDir });
+
+        assert.deepEqual(pi.names(), ["one"]);
+    });
+
+    it("registers commands on a resource discovery pass", async () => {
+        const pi = createFakePi();
+        activate(pi, () => agentDir);
+
+        await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "reload" }, {});
+
+        assert.deepEqual(pi.names(), ["one"]);
+    });
+
+    it("keeps a single entry per command name when both lifecycle events fire", async () => {
+        const pi = createFakePi();
+        activate(pi, () => agentDir);
+
+        await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
+        await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "startup" }, {});
+
+        assert.deepEqual(pi.names(), ["one"]);
+        assert.equal(pi.registrations.filter((name) => name === "one").length, 2);
     });
 });
 
