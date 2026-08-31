@@ -29,12 +29,29 @@ function createCommandRegistry() {
     };
 }
 
+/** Fake command context capturing what a handler reports back to the user. */
+function createFakeCtx() {
+    const notifications: { message: string; type?: string }[] = [];
+    return {
+        notifications,
+        ui: {
+            notify(message: string, type?: string) {
+                notifications.push({ message, type });
+            },
+        },
+    };
+}
+
 /** Fake ExtensionAPI that records subscriptions so tests can fire pi's lifecycle events. */
 function createFakePi() {
     const handlers = new Map<string, ((event: any, ctx: any) => unknown)[]>();
+    const sentMessages: string[] = [];
     return {
         ...createCommandRegistry(),
-        sendUserMessage() {},
+        sentMessages,
+        sendUserMessage(message: string) {
+            sentMessages.push(message);
+        },
         on(event: string, handler: (event: any, ctx: any) => unknown) {
             handlers.set(event, [...(handlers.get(event) ?? []), handler]);
         },
@@ -182,6 +199,63 @@ describe("registerCommands", () => {
         registerCommands(pi, { cwd: projectDir, agentDir });
 
         assert.deepEqual(pi.names(), ["deploy", "one"]);
+    });
+});
+
+describe("command invocation", () => {
+    let tmpDir: string;
+    let agentDir: string;
+    let projectDir: string;
+    let commandsDir: string;
+
+    beforeEach(() => {
+        tmpDir = mkdtempSync(join(tmpdir(), "pi-claude-cmds-"));
+        agentDir = join(tmpDir, "agent");
+        projectDir = join(tmpDir, "project");
+        commandsDir = join(projectDir, ".claude", "commands");
+        mkdirSync(agentDir, { recursive: true });
+        mkdirSync(commandsDir, { recursive: true });
+        mkdirSync(join(projectDir, ".pi"), { recursive: true });
+        writeFileSync(join(agentDir, "settings.json"), JSON.stringify({}));
+        writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ commands: [".claude/commands"] }));
+        writeFileSync(join(commandsDir, "one.md"), "---\ndescription: First\n---\nBody one\n");
+    });
+
+    afterEach(() => {
+        rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("sends the command body as a user message", async () => {
+        const pi = createFakePi();
+        registerCommands(pi, { cwd: projectDir, agentDir });
+
+        await pi.commands.get("one")!.handler("", createFakeCtx());
+
+        assert.deepEqual(pi.sentMessages, ["Body one\n"]);
+    });
+
+    it("appends arguments below the command body", async () => {
+        const pi = createFakePi();
+        registerCommands(pi, { cwd: projectDir, agentDir });
+
+        await pi.commands.get("one")!.handler("AUD-2157", createFakeCtx());
+
+        assert.deepEqual(pi.sentMessages, ["Body one\n\n\nUser: AUD-2157"]);
+    });
+
+    it("reports a command file that disappeared instead of sending a message", async () => {
+        const pi = createFakePi();
+        const ctx = createFakeCtx();
+        registerCommands(pi, { cwd: projectDir, agentDir });
+        rmSync(join(commandsDir, "one.md"));
+
+        await pi.commands.get("one")!.handler("", ctx);
+
+        assert.deepEqual(pi.sentMessages, []);
+        assert.equal(ctx.notifications.length, 1);
+        assert.equal(ctx.notifications[0].type, "error");
+        assert.equal(ctx.notifications[0].message.includes(join(commandsDir, "one.md")), true);
+        assert.equal(ctx.notifications[0].message.includes("/reload"), true);
     });
 });
 

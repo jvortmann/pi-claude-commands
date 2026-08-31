@@ -135,6 +135,14 @@ function expandCommandDir(baseDir: string, configuredDir: string): string[] {
         .sort();
 }
 
+function readCommandFile(path: string): string | undefined {
+    try {
+        return readFileSync(path, "utf8");
+    } catch {
+        return undefined;
+    }
+}
+
 function expandTilde(dir: string): string {
     if (dir !== "~" && !dir.startsWith("~/")) return dir;
     const home = process.env.HOME ?? homedir();
@@ -171,8 +179,15 @@ export function registerCommands(pi: CommandRegistrar, options: { cwd: string; a
             const fallback = `Claude command: ${cmd.name}`;
             pi.registerCommand(cmd.name, {
                 description: `${tag} ${cmd.description || fallback}`,
-                handler: async (args) => {
-                    const content = readFileSync(cmd.path, "utf8");
+                handler: async (args, ctx) => {
+                    // Read at invocation so edits apply immediately, which also means the file may
+                    // be gone: pi has no way to unregister a command once its file disappears.
+                    const content = readCommandFile(cmd.path);
+                    if (content === undefined) {
+                        ctx.ui.notify(`Command file is gone: ${cmd.path} — run /reload to refresh.`, "error");
+                        return;
+                    }
+
                     const { body } = parseFrontmatter(content);
                     const prompt = args ? `${body}\n\nUser: ${args}` : body;
                     pi.sendUserMessage(prompt);
