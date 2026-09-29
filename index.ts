@@ -10,7 +10,7 @@
  *   { "commands": [".claude/commands"] }
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { globSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -304,5 +304,5 @@ export function activate(pi: ExtensionAPI, resolveAgentDir: () => string | Promi
 }
 
 export default function (pi: ExtensionAPI) {
-    activate(pi, async () => (await import("@mariozechner/pi-coding-agent")).getAgentDir());
+    activate(pi, async () => (await import("@earendil-works/pi-coding-agent")).getAgentDir());
 }
