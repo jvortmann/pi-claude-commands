@@ -10,7 +10,7 @@ import {
     resolveCommandDirs,
     registerCommands,
     activate,
-} from "../index";
+} from "../index.ts";
 
 /** Mirrors how pi stores extension commands: a map keyed by command name. */
 function createCommandRegistry() {
