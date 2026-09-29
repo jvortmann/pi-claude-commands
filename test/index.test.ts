@@ -29,6 +29,64 @@ function createCommandRegistry() {
     };
 }
 
+/**
+ * Fake pi runtime shared by several loaded copies of the extension, like pi itself: one command
+ * table where each copy keeps its own entries, and one event bus between copies.
+ */
+function createFakeHost() {
+    const commands: { name: string; owner: string; options: any }[] = [];
+    const listeners = new Map<string, ((data: unknown) => void)[]>();
+    const copies: { handlers: Map<string, ((event: any, ctx: any) => unknown)[]> }[] = [];
+
+    function load(path: string) {
+        const handlers = new Map<string, ((event: any, ctx: any) => unknown)[]>();
+        copies.push({ handlers });
+        return {
+            registerCommand(name: string, options: any) {
+                const existing = commands.findIndex((cmd) => cmd.name === name && cmd.owner === path);
+                if (existing >= 0) commands.splice(existing, 1);
+                commands.push({ name, owner: path, options });
+            },
+            getCommands() {
+                return commands.map((cmd) => ({
+                    name: cmd.name,
+                    source: "extension",
+                    sourceInfo: { path: cmd.owner, source: "local", scope: "project", origin: "top-level" },
+                }));
+            },
+            sendUserMessage() {},
+            on(event: string, handler: (event: any, ctx: any) => unknown) {
+                handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+            },
+            events: {
+                emit(channel: string, data: unknown) {
+                    for (const listener of listeners.get(channel) ?? []) listener(data);
+                },
+                on(channel: string, listener: (data: unknown) => void) {
+                    listeners.set(channel, [...(listeners.get(channel) ?? []), listener]);
+                    return () => {};
+                },
+            },
+        };
+    }
+
+    return {
+        load,
+        /** The only entry for a name. Fails when copies registered it twice. */
+        command(name: string) {
+            const matches = commands.filter((cmd) => cmd.name === name);
+            assert.equal(matches.length, 1, `expected one /${name}, found ${matches.length}`);
+            return matches[0].options;
+        },
+        /** Fires an event through every copy in load order, as pi does. */
+        async emit(event: string, payload: unknown, ctx: unknown) {
+            for (const copy of copies) {
+                for (const handler of copy.handlers.get(event) ?? []) await handler(payload, ctx);
+            }
+        },
+    };
+}
+
 /** Fake command context capturing what a handler reports back to the user. */
 function createFakeCtx() {
     const notifications: { message: string; type?: string }[] = [];
@@ -48,6 +106,7 @@ function createFakeCtx() {
  */
 function createFakePi(externalCommands: { name: string; owner: string }[] = []) {
     const handlers = new Map<string, ((event: any, ctx: any) => unknown)[]>();
+    const listeners = new Map<string, ((data: unknown) => void)[]>();
     const sentMessages: string[] = [];
     const registry = createCommandRegistry();
     return {
@@ -69,6 +128,15 @@ function createFakePi(externalCommands: { name: string; owner: string }[] = []) 
         },
         sendUserMessage(message: string) {
             sentMessages.push(message);
+        },
+        events: {
+            emit(channel: string, data: unknown) {
+                for (const listener of listeners.get(channel) ?? []) listener(data);
+            },
+            on(channel: string, listener: (data: unknown) => void) {
+                listeners.set(channel, [...(listeners.get(channel) ?? []), listener]);
+                return () => {};
+            },
         },
         on(event: string, handler: (event: any, ctx: any) => unknown) {
             handlers.set(event, [...(handlers.get(event) ?? []), handler]);
@@ -361,6 +429,33 @@ describe("extension activation", () => {
         await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
 
         assert.equal(pi.names().includes("one"), false);
+    });
+
+    it("shows the names another loaded copy skipped in the report", async () => {
+        const host = createFakeHost();
+        const ctx = createFakeCtx();
+        activate(host.load("/ext/first/index.ts") as any, () => agentDir);
+        activate(host.load("/ext/second/index.ts") as any, () => agentDir);
+
+        await host.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
+        await host.command("claude-commands").handler("", ctx);
+
+        const report = ctx.notifications[0].message;
+        assert.equal(report.startsWith("Claude commands: 1 registered, 1 skipped"), true);
+        assert.equal(report.includes("(owned by /ext/first/index.ts)"), true);
+    });
+
+    it("counts each copy's skips once when both lifecycle events fire", async () => {
+        const host = createFakeHost();
+        const ctx = createFakeCtx();
+        activate(host.load("/ext/first/index.ts") as any, () => agentDir);
+        activate(host.load("/ext/second/index.ts") as any, () => agentDir);
+
+        await host.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
+        await host.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "startup" }, {});
+        await host.command("claude-commands").handler("", ctx);
+
+        assert.equal(ctx.notifications[0].message.startsWith("Claude commands: 1 registered, 1 skipped"), true);
     });
 
     it("keeps a single entry per command name when both lifecycle events fire", async () => {

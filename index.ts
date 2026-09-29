@@ -11,6 +11,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { randomUUID } from "node:crypto";
 import { globSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
@@ -180,9 +181,9 @@ type CommandRegistrar = Pick<ExtensionAPI, "registerCommand" | "sendUserMessage"
  */
 export function registerCommands(
     pi: CommandRegistrar,
-    options: { cwd: string; agentDir: string; owned?: Set<string> },
-): void {
-    const { cwd, agentDir, owned } = options;
+    options: { cwd: string; agentDir: string; owned?: Set<string>; peerReports?: () => RegistrationReport[] },
+): RegistrationReport {
+    const { cwd, agentDir, owned, peerReports } = options;
     const sources: CommandDirSource[] = [
         { settingsPath: join(agentDir, "settings.json"), baseDir: agentDir, scope: "global" },
         { settingsPath: join(cwd, ".pi", "settings.json"), baseDir: cwd, scope: "project" },
@@ -227,17 +228,28 @@ export function registerCommands(
         pi.registerCommand(REPORT_COMMAND, {
             description: "List Claude commands that were registered and those skipped as duplicates",
             handler: async (_args, ctx) => {
-                ctx.ui.notify(formatReport(report), "info");
+                ctx.ui.notify(formatReport(mergeReports([report, ...(peerReports?.() ?? [])])), "info");
             },
         });
     }
+
+    return report;
 }
 
 const REPORT_COMMAND = "claude-commands";
 
-interface RegistrationReport {
+const REPORT_CHANNEL = "claude-commands:report";
+
+export interface RegistrationReport {
     registered: { name: string; path: string }[];
     skipped: { name: string; path: string; owner: string }[];
+}
+
+function mergeReports(reports: RegistrationReport[]): RegistrationReport {
+    return {
+        registered: reports.flatMap((report) => report.registered),
+        skipped: reports.flatMap((report) => report.skipped),
+    };
 }
 
 function formatReport(report: RegistrationReport): string {
@@ -263,7 +275,24 @@ function formatReport(report: RegistrationReport): string {
 export function activate(pi: ExtensionAPI, resolveAgentDir: () => string | Promise<string>): void {
     // Names this instance owns, so later passes refresh them instead of reading them as a clash.
     const owned = new Set<string>();
-    const refresh = async (cwd: string) => registerCommands(pi, { cwd, agentDir: await resolveAgentDir(), owned });
+    // When the extension loads twice, the copy that skips names also loses /claude-commands, so each
+    // copy publishes its report and the copy that owns the command shows all of them.
+    const id = randomUUID();
+    const peers = new Map<string, RegistrationReport>();
+    pi.events.on(REPORT_CHANNEL, (data) => {
+        const message = data as { id: string; report: RegistrationReport };
+        if (message.id !== id) peers.set(message.id, message.report);
+    });
+
+    const refresh = async (cwd: string) => {
+        const report = registerCommands(pi, {
+            cwd,
+            agentDir: await resolveAgentDir(),
+            owned,
+            peerReports: () => [...peers.values()],
+        });
+        pi.events.emit(REPORT_CHANNEL, { id, report });
+    };
 
     pi.on("resources_discover", async (event) => {
         await refresh(event.cwd);
