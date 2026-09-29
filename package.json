@@ -1,6 +1,6 @@
 {
     "name": "pi-claude-commands",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "Bridge Claude Code commands (.claude/commands/) into pi as slash commands with nested folder support (/jira/plan, /jira/assess-risks, etc.)",
     "type": "module",
     "keywords": [
