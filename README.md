@@ -20,6 +20,18 @@ This lets teams share the same command files between Claude Code and pi without 
 pi install git:github.com/jvortmann/pi-claude-commands
 ```
 
+### From a local checkout
+
+Give pi the checkout directory:
+
+```bash
+pi install /path/to/pi-claude-commands   # every session, loads the files where they are
+pi -e /path/to/pi-claude-commands        # this run only
+```
+
+Run `/reload` after an edit. To link the checkout into an extensions folder, link the directory,
+not `index.ts`. The entry file loads its modules from `src/` next to it.
+
 ## Setup
 
 Add a `commands` array to your project's `.pi/settings.json` pointing to directories containing `.md` command files:
