@@ -10,6 +10,10 @@ A [pi](https://github.com/earendil-works/pi) package that bridges [Claude Code](
 
 This lets teams share the same command files between Claude Code and pi without duplication.
 
+## Requirements
+
+- pi >= 0.79.1 (on older versions the extension loads no commands)
+
 ## Install
 
 ```bash
@@ -33,6 +37,12 @@ Multiple directories are supported:
     "commands": [".claude/commands", ".team/commands"]
 }
 ```
+
+### Project trust
+
+pi reads project settings only after you trust the project, and this extension follows the same
+rule. In a project that you did not trust, it loads only the commands from your global settings.
+Run `/trust` to trust the project, then restart pi.
 
 ### Path resolution
 

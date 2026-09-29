@@ -248,10 +248,22 @@ describe("registerCommands", () => {
         rmSync(tmpDir, { recursive: true, force: true });
     });
 
+    it("leaves out project commands when the project is not trusted", () => {
+        const pi = createFakePi();
+        mkdirSync(join(agentDir, "commands"), { recursive: true });
+        writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ commands: ["commands"] }));
+        writeFileSync(join(agentDir, "commands", "personal.md"), "---\ndescription: Mine\n---\nBody\n");
+
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: false });
+
+        assert.equal(pi.names().includes("personal"), true);
+        assert.equal(pi.names().includes("one"), false);
+    });
+
     it("skips a command name another source already registered", () => {
         const pi = createFakePi([{ name: "one", owner: "/ext/other-extension/index.ts" }]);
 
-        registerCommands(pi, { cwd: projectDir, agentDir, owned: new Set() });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true, owned: new Set() });
 
         assert.equal(pi.names().includes("one"), false);
     });
@@ -261,7 +273,7 @@ describe("registerCommands", () => {
         const ctx = createFakeCtx();
         writeFileSync(join(commandsDir, "two.md"), "---\ndescription: Second\n---\nBody two\n");
 
-        registerCommands(pi, { cwd: projectDir, agentDir, owned: new Set() });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true, owned: new Set() });
         await pi.commands.get("claude-commands")!.handler("", ctx);
 
         assert.equal(ctx.notifications.length, 1);
@@ -275,11 +287,11 @@ describe("registerCommands", () => {
         const pi = createFakePi();
         const owned = new Set<string>();
 
-        registerCommands(pi, { cwd: projectDir, agentDir, owned });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true, owned });
         assert.equal(pi.commands.get("one")?.description, "[p] First");
 
         writeFileSync(join(commandsDir, "one.md"), "---\ndescription: Renamed\n---\nBody one\n");
-        registerCommands(pi, { cwd: projectDir, agentDir, owned });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true, owned });
 
         assert.equal(pi.commands.get("one")?.description, "[p] Renamed");
     });
@@ -287,11 +299,11 @@ describe("registerCommands", () => {
     it("picks up a command file created after the previous pass", () => {
         const pi = createCommandRegistry();
 
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
         assert.deepEqual(pi.names(), ["claude-commands", "one"]);
 
         writeFileSync(join(commandsDir, "two.md"), "---\ndescription: Second\n---\nBody two\n");
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
 
         assert.deepEqual(pi.names(), ["claude-commands", "one", "two"]);
     });
@@ -299,11 +311,11 @@ describe("registerCommands", () => {
     it("re-registers a command whose description changed since the previous pass", () => {
         const pi = createCommandRegistry();
 
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
         assert.equal(pi.commands.get("one")?.description, "[p] First");
 
         writeFileSync(join(commandsDir, "one.md"), "---\ndescription: Renamed\n---\nBody one\n");
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
 
         assert.equal(pi.commands.get("one")?.description, "[p] Renamed");
     });
@@ -314,14 +326,14 @@ describe("registerCommands", () => {
         mkdirSync(extraDir, { recursive: true });
         writeFileSync(join(extraDir, "deploy.md"), "---\ndescription: Deploy\n---\nBody deploy\n");
 
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
         assert.deepEqual(pi.names(), ["claude-commands", "one"]);
 
         writeFileSync(
             join(projectDir, ".pi", "settings.json"),
             JSON.stringify({ commands: [".claude/commands", ".team/commands"] }),
         );
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
 
         assert.deepEqual(pi.names(), ["claude-commands", "deploy", "one"]);
     });
@@ -352,7 +364,7 @@ describe("command invocation", () => {
 
     it("sends the command body as a user message", async () => {
         const pi = createFakePi();
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
 
         await pi.commands.get("one")!.handler("", createFakeCtx());
 
@@ -361,7 +373,7 @@ describe("command invocation", () => {
 
     it("appends arguments below the command body", async () => {
         const pi = createFakePi();
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
 
         await pi.commands.get("one")!.handler("AUD-2157", createFakeCtx());
 
@@ -370,7 +382,7 @@ describe("command invocation", () => {
 
     it("queues the prompt until the agent finishes its current run", async () => {
         const pi = createFakePi();
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
 
         await pi.commands.get("one")!.handler("", createFakeCtx());
 
@@ -380,7 +392,7 @@ describe("command invocation", () => {
     it("reports a command file that disappeared instead of sending a message", async () => {
         const pi = createFakePi();
         const ctx = createFakeCtx();
-        registerCommands(pi, { cwd: projectDir, agentDir });
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true });
         rmSync(join(commandsDir, "one.md"));
 
         await pi.commands.get("one")!.handler("", ctx);
@@ -420,16 +432,26 @@ describe("extension activation", () => {
         const pi = createFakePi();
         activate(pi, () => agentDir);
 
-        await pi.emit("session_start", { type: "session_start", reason: "resume" }, { cwd: projectDir });
+        await pi.emit("session_start", { type: "session_start", reason: "resume" }, { cwd: projectDir, isProjectTrusted: () => true });
 
         assert.deepEqual(pi.names(), ["claude-commands", "one"]);
+    });
+
+    it("leaves out project commands when a session starts in an untrusted project", async () => {
+        const pi = createFakePi();
+        activate(pi, () => agentDir);
+
+        await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir, isProjectTrusted: () => false });
+        await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "startup" }, { isProjectTrusted: () => false });
+
+        assert.equal(pi.names().includes("one"), false);
     });
 
     it("registers commands on a resource discovery pass", async () => {
         const pi = createFakePi();
         activate(pi, () => agentDir);
 
-        await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "reload" }, {});
+        await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "reload" }, { isProjectTrusted: () => true });
 
         assert.deepEqual(pi.names(), ["claude-commands", "one"]);
     });
@@ -438,7 +460,7 @@ describe("extension activation", () => {
         const pi = createFakePi([{ name: "one", owner: "/ext/other-extension/index.ts" }]);
         activate(pi, () => agentDir);
 
-        await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
+        await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir, isProjectTrusted: () => true });
 
         assert.equal(pi.names().includes("one"), false);
     });
@@ -449,7 +471,7 @@ describe("extension activation", () => {
         activate(host.load("/ext/first/index.ts") as any, () => agentDir);
         activate(host.load("/ext/second/index.ts") as any, () => agentDir);
 
-        await host.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
+        await host.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir, isProjectTrusted: () => true });
         await host.command("claude-commands").handler("", ctx);
 
         const report = ctx.notifications[0].message;
@@ -463,8 +485,8 @@ describe("extension activation", () => {
         activate(host.load("/ext/first/index.ts") as any, () => agentDir);
         activate(host.load("/ext/second/index.ts") as any, () => agentDir);
 
-        await host.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
-        await host.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "startup" }, {});
+        await host.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir, isProjectTrusted: () => true });
+        await host.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "startup" }, { isProjectTrusted: () => true });
         await host.command("claude-commands").handler("", ctx);
 
         assert.equal(ctx.notifications[0].message.startsWith("Claude commands: 1 registered, 1 skipped"), true);
@@ -474,8 +496,8 @@ describe("extension activation", () => {
         const pi = createFakePi();
         activate(pi, () => agentDir);
 
-        await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
-        await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "startup" }, {});
+        await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir, isProjectTrusted: () => true });
+        await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "startup" }, { isProjectTrusted: () => true });
 
         assert.deepEqual(pi.names(), ["claude-commands", "one"]);
         assert.equal(pi.registrations.filter((name) => name === "one").length, 2);

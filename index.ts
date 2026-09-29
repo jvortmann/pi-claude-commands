@@ -181,13 +181,23 @@ type CommandRegistrar = Pick<ExtensionAPI, "registerCommand" | "sendUserMessage"
  */
 export function registerCommands(
     pi: CommandRegistrar,
-    options: { cwd: string; agentDir: string; owned?: Set<string>; peerReports?: () => RegistrationReport[] },
+    options: {
+        cwd: string;
+        agentDir: string;
+        projectTrusted: boolean;
+        owned?: Set<string>;
+        peerReports?: () => RegistrationReport[];
+    },
 ): RegistrationReport {
-    const { cwd, agentDir, owned, peerReports } = options;
+    const { cwd, agentDir, projectTrusted, owned, peerReports } = options;
     const sources: CommandDirSource[] = [
         { settingsPath: join(agentDir, "settings.json"), baseDir: agentDir, scope: "global" },
-        { settingsPath: join(cwd, ".pi", "settings.json"), baseDir: cwd, scope: "project" },
     ];
+    // Command bodies are prompts for the model, and pi reads project settings only once the user
+    // trusts the project. Anything but an explicit yes leaves the project commands out.
+    if (projectTrusted === true) {
+        sources.push({ settingsPath: join(cwd, ".pi", "settings.json"), baseDir: cwd, scope: "project" });
+    }
     const foreignOwners = owned ? findForeignOwners(pi, owned) : new Map<string, string>();
     const report: RegistrationReport = { registered: [], skipped: [] };
 
@@ -286,22 +296,23 @@ export function activate(pi: ExtensionAPI, resolveAgentDir: () => string | Promi
         if (message.id !== id) peers.set(message.id, message.report);
     });
 
-    const refresh = async (cwd: string) => {
+    const refresh = async (cwd: string, projectTrusted: boolean) => {
         const report = registerCommands(pi, {
             cwd,
             agentDir: await resolveAgentDir(),
+            projectTrusted,
             owned,
             peerReports: () => [...peers.values()],
         });
         pi.events.emit(REPORT_CHANNEL, { id, report });
     };
 
-    pi.on("resources_discover", async (event) => {
-        await refresh(event.cwd);
+    pi.on("resources_discover", async (event, ctx) => {
+        await refresh(event.cwd, ctx.isProjectTrusted());
     });
 
     pi.on("session_start", async (_event, ctx) => {
-        await refresh(ctx.cwd);
+        await refresh(ctx.cwd, ctx.isProjectTrusted());
     });
 }
 
