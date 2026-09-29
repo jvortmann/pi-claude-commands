@@ -1,6 +1,6 @@
 # pi-claude-commands
 
-A [pi](https://github.com/badlogic/pi-mono) package that bridges [Claude Code](https://docs.anthropic.com/en/docs/claude-code) commands into pi as slash commands, preserving the folder structure as hierarchical command names.
+A [pi](https://github.com/earendil-works/pi) package that bridges [Claude Code](https://docs.anthropic.com/en/docs/claude-code) commands into pi as slash commands, preserving the folder structure as hierarchical command names.
 
 ```
 .claude/commands/jira/plan.md         → /jira/plan
