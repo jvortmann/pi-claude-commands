@@ -108,10 +108,12 @@ function createFakePi(externalCommands: { name: string; owner: string }[] = []) 
     const handlers = new Map<string, ((event: any, ctx: any) => unknown)[]>();
     const listeners = new Map<string, ((data: unknown) => void)[]>();
     const sentMessages: string[] = [];
+    const sentOptions: unknown[] = [];
     const registry = createCommandRegistry();
     return {
         ...registry,
         sentMessages,
+        sentOptions,
         getCommands() {
             return [
                 ...externalCommands.map((cmd) => ({
@@ -126,8 +128,9 @@ function createFakePi(externalCommands: { name: string; owner: string }[] = []) 
                 })),
             ];
         },
-        sendUserMessage(message: string) {
+        sendUserMessage(message: string, options?: unknown) {
             sentMessages.push(message);
+            sentOptions.push(options);
         },
         events: {
             emit(channel: string, data: unknown) {
@@ -363,6 +366,15 @@ describe("command invocation", () => {
         await pi.commands.get("one")!.handler("AUD-2157", createFakeCtx());
 
         assert.deepEqual(pi.sentMessages, ["Body one\n\n\nUser: AUD-2157"]);
+    });
+
+    it("queues the prompt until the agent finishes its current run", async () => {
+        const pi = createFakePi();
+        registerCommands(pi, { cwd: projectDir, agentDir });
+
+        await pi.commands.get("one")!.handler("", createFakeCtx());
+
+        assert.deepEqual(pi.sentOptions, [{ deliverAs: "followUp" }]);
     });
 
     it("reports a command file that disappeared instead of sending a message", async () => {
