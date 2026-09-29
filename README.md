@@ -92,6 +92,10 @@ If another extension or prompt already uses a command name, that name is skipped
 its meaning instead of splitting into `/name:1` and `/name:2`. Run `/claude-commands` to list the
 commands that were registered and the names that were skipped, with the source that owns each one.
 
+The extension also skips the names of pi's own commands, such as `/compact`, `/model` and `/debug`.
+The pi terminal UI runs its own command first, so a command file with one of these names never
+runs. Rename the file to use it.
+
 ## License
 
 MIT

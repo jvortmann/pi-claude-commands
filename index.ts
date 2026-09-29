@@ -137,6 +137,22 @@ function expandCommandDir(baseDir: string, configuredDir: string): string[] {
 }
 
 /**
+ * Names the pi terminal UI handles itself, before it looks at extension commands, so an extension
+ * command with one of these names never runs there. pi does not export this list, and
+ * pi.getCommands() leaves the built-ins out. Taken from the pi 0.99.1 interactive mode, including
+ * the names it handles without listing them in its own help.
+ */
+const PI_BUILT_IN_COMMANDS = [
+    "arminsayshi", "bug", "changelog", "clone", "compact", "copy", "debug", "dementedelves", "export",
+    "fork", "hotkeys", "import", "login", "logout", "model", "name", "new", "quit", "reload", "resume",
+    "scoped-models", "session", "settings", "share", "thinking", "tree", "trust",
+];
+
+function builtInOwners(): Map<string, string> {
+    return new Map(PI_BUILT_IN_COMMANDS.map((name) => [name, "pi built-in"]));
+}
+
+/**
  * Names already taken by someone else. Commands this instance registered on an earlier pass are
  * excluded, otherwise a refresh would mistake its own entries for a clash and stop updating them.
  */
@@ -198,7 +214,7 @@ export function registerCommands(
     if (projectTrusted === true) {
         sources.push({ settingsPath: join(cwd, ".pi", "settings.json"), baseDir: cwd, scope: "project" });
     }
-    const foreignOwners = owned ? findForeignOwners(pi, owned) : new Map<string, string>();
+    const foreignOwners = new Map([...builtInOwners(), ...(owned ? findForeignOwners(pi, owned) : [])]);
     const report: RegistrationReport = { registered: [], skipped: [] };
 
     for (const { path: dir, scope } of resolveCommandDirs(sources)) {

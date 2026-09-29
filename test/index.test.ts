@@ -260,6 +260,36 @@ describe("registerCommands", () => {
         assert.equal(pi.names().includes("one"), false);
     });
 
+    it("skips a command named after a pi built-in", () => {
+        const pi = createFakePi();
+        writeFileSync(join(commandsDir, "compact.md"), "---\ndescription: Shadowed\n---\nBody\n");
+
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true, owned: new Set() });
+
+        assert.equal(pi.names().includes("compact"), false);
+        assert.equal(pi.names().includes("one"), true);
+    });
+
+    it("reports a built-in name as owned by pi", async () => {
+        const pi = createFakePi();
+        const ctx = createFakeCtx();
+        writeFileSync(join(commandsDir, "compact.md"), "---\ndescription: Shadowed\n---\nBody\n");
+
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true, owned: new Set() });
+        await pi.commands.get("claude-commands")!.handler("", ctx);
+
+        assert.equal(ctx.notifications[0].message.includes("/compact - " + join(commandsDir, "compact.md") + " (owned by pi built-in)"), true);
+    });
+
+    it("skips a name the terminal UI handles without listing it", () => {
+        const pi = createFakePi();
+        writeFileSync(join(commandsDir, "debug.md"), "---\ndescription: Shadowed\n---\nBody\n");
+
+        registerCommands(pi, { cwd: projectDir, agentDir, projectTrusted: true, owned: new Set() });
+
+        assert.equal(pi.names().includes("debug"), false);
+    });
+
     it("skips a command name another source already registered", () => {
         const pi = createFakePi([{ name: "one", owner: "/ext/other-extension/index.ts" }]);
 
