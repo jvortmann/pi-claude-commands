@@ -42,13 +42,31 @@ function createFakeCtx() {
     };
 }
 
-/** Fake ExtensionAPI that records subscriptions so tests can fire pi's lifecycle events. */
-function createFakePi() {
+/**
+ * Fake ExtensionAPI that records subscriptions so tests can fire pi's lifecycle events.
+ * getCommands() mirrors pi: it reports commands from other sources plus everything registered here.
+ */
+function createFakePi(externalCommands: { name: string; owner: string }[] = []) {
     const handlers = new Map<string, ((event: any, ctx: any) => unknown)[]>();
     const sentMessages: string[] = [];
+    const registry = createCommandRegistry();
     return {
-        ...createCommandRegistry(),
+        ...registry,
         sentMessages,
+        getCommands() {
+            return [
+                ...externalCommands.map((cmd) => ({
+                    name: cmd.name,
+                    source: "extension",
+                    sourceInfo: { path: cmd.owner, source: "local", scope: "project", origin: "top-level" },
+                })),
+                ...[...registry.commands.keys()].map((name) => ({
+                    name,
+                    source: "extension",
+                    sourceInfo: { path: "/ext/claude-commands/index.ts", source: "local", scope: "project", origin: "top-level" },
+                })),
+            ];
+        },
         sendUserMessage(message: string) {
             sentMessages.push(message);
         },
@@ -159,16 +177,52 @@ describe("registerCommands", () => {
         rmSync(tmpDir, { recursive: true, force: true });
     });
 
+    it("skips a command name another source already registered", () => {
+        const pi = createFakePi([{ name: "one", owner: "/ext/other-extension/index.ts" }]);
+
+        registerCommands(pi, { cwd: projectDir, agentDir, owned: new Set() });
+
+        assert.equal(pi.names().includes("one"), false);
+    });
+
+    it("reports registered commands and skipped clashes on request", async () => {
+        const pi = createFakePi([{ name: "one", owner: "/ext/other-extension/index.ts" }]);
+        const ctx = createFakeCtx();
+        writeFileSync(join(commandsDir, "two.md"), "---\ndescription: Second\n---\nBody two\n");
+
+        registerCommands(pi, { cwd: projectDir, agentDir, owned: new Set() });
+        await pi.commands.get("claude-commands")!.handler("", ctx);
+
+        assert.equal(ctx.notifications.length, 1);
+        const report = ctx.notifications[0].message;
+        assert.equal(report.includes(join(commandsDir, "two.md")), true);
+        assert.equal(report.includes(join(commandsDir, "one.md")), true);
+        assert.equal(report.includes("/ext/other-extension/index.ts"), true);
+    });
+
+    it("still refreshes its own commands on a later pass", () => {
+        const pi = createFakePi();
+        const owned = new Set<string>();
+
+        registerCommands(pi, { cwd: projectDir, agentDir, owned });
+        assert.equal(pi.commands.get("one")?.description, "[p] First");
+
+        writeFileSync(join(commandsDir, "one.md"), "---\ndescription: Renamed\n---\nBody one\n");
+        registerCommands(pi, { cwd: projectDir, agentDir, owned });
+
+        assert.equal(pi.commands.get("one")?.description, "[p] Renamed");
+    });
+
     it("picks up a command file created after the previous pass", () => {
         const pi = createCommandRegistry();
 
         registerCommands(pi, { cwd: projectDir, agentDir });
-        assert.deepEqual(pi.names(), ["one"]);
+        assert.deepEqual(pi.names(), ["claude-commands", "one"]);
 
         writeFileSync(join(commandsDir, "two.md"), "---\ndescription: Second\n---\nBody two\n");
         registerCommands(pi, { cwd: projectDir, agentDir });
 
-        assert.deepEqual(pi.names(), ["one", "two"]);
+        assert.deepEqual(pi.names(), ["claude-commands", "one", "two"]);
     });
 
     it("re-registers a command whose description changed since the previous pass", () => {
@@ -190,7 +244,7 @@ describe("registerCommands", () => {
         writeFileSync(join(extraDir, "deploy.md"), "---\ndescription: Deploy\n---\nBody deploy\n");
 
         registerCommands(pi, { cwd: projectDir, agentDir });
-        assert.deepEqual(pi.names(), ["one"]);
+        assert.deepEqual(pi.names(), ["claude-commands", "one"]);
 
         writeFileSync(
             join(projectDir, ".pi", "settings.json"),
@@ -198,7 +252,7 @@ describe("registerCommands", () => {
         );
         registerCommands(pi, { cwd: projectDir, agentDir });
 
-        assert.deepEqual(pi.names(), ["deploy", "one"]);
+        assert.deepEqual(pi.names(), ["claude-commands", "deploy", "one"]);
     });
 });
 
@@ -288,7 +342,7 @@ describe("extension activation", () => {
 
         await pi.emit("session_start", { type: "session_start", reason: "resume" }, { cwd: projectDir });
 
-        assert.deepEqual(pi.names(), ["one"]);
+        assert.deepEqual(pi.names(), ["claude-commands", "one"]);
     });
 
     it("registers commands on a resource discovery pass", async () => {
@@ -297,7 +351,16 @@ describe("extension activation", () => {
 
         await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "reload" }, {});
 
-        assert.deepEqual(pi.names(), ["one"]);
+        assert.deepEqual(pi.names(), ["claude-commands", "one"]);
+    });
+
+    it("skips clashing names when refreshing through lifecycle events", async () => {
+        const pi = createFakePi([{ name: "one", owner: "/ext/other-extension/index.ts" }]);
+        activate(pi, () => agentDir);
+
+        await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
+
+        assert.equal(pi.names().includes("one"), false);
     });
 
     it("keeps a single entry per command name when both lifecycle events fire", async () => {
@@ -307,7 +370,7 @@ describe("extension activation", () => {
         await pi.emit("session_start", { type: "session_start", reason: "startup" }, { cwd: projectDir });
         await pi.emit("resources_discover", { type: "resources_discover", cwd: projectDir, reason: "startup" }, {});
 
-        assert.deepEqual(pi.names(), ["one"]);
+        assert.deepEqual(pi.names(), ["claude-commands", "one"]);
         assert.equal(pi.registrations.filter((name) => name === "one").length, 2);
     });
 });

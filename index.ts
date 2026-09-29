@@ -135,6 +135,19 @@ function expandCommandDir(baseDir: string, configuredDir: string): string[] {
         .sort();
 }
 
+/**
+ * Names already taken by someone else. Commands this instance registered on an earlier pass are
+ * excluded, otherwise a refresh would mistake its own entries for a clash and stop updating them.
+ */
+function findForeignOwners(pi: CommandRegistrar, owned: Set<string>): Map<string, string> {
+    const owners = new Map<string, string>();
+    for (const command of pi.getCommands()) {
+        if (owned.has(command.name)) continue;
+        owners.set(command.name, command.sourceInfo?.path ?? "unknown source");
+    }
+    return owners;
+}
+
 function readCommandFile(path: string): string | undefined {
     try {
         return readFileSync(path, "utf8");
@@ -158,24 +171,37 @@ function isDirectory(path: string): boolean {
 }
 
 /** Everything a registration pass needs from pi, kept narrow so tests can drive it. */
-type CommandRegistrar = Pick<ExtensionAPI, "registerCommand" | "sendUserMessage">;
+type CommandRegistrar = Pick<ExtensionAPI, "registerCommand" | "sendUserMessage" | "getCommands">;
 
 /**
  * Scan the configured directories and register what is on disk right now. Runs on every discovery
  * pass so files added, changed or removed during a session are picked up by /reload and by session
  * restarts.
  */
-export function registerCommands(pi: CommandRegistrar, options: { cwd: string; agentDir: string }): void {
-    const { cwd, agentDir } = options;
+export function registerCommands(
+    pi: CommandRegistrar,
+    options: { cwd: string; agentDir: string; owned?: Set<string> },
+): void {
+    const { cwd, agentDir, owned } = options;
     const sources: CommandDirSource[] = [
         { settingsPath: join(agentDir, "settings.json"), baseDir: agentDir, scope: "global" },
         { settingsPath: join(cwd, ".pi", "settings.json"), baseDir: cwd, scope: "project" },
     ];
+    const foreignOwners = owned ? findForeignOwners(pi, owned) : new Map<string, string>();
+    const report: RegistrationReport = { registered: [], skipped: [] };
 
     for (const { path: dir, scope } of resolveCommandDirs(sources)) {
         const tag = scope === "global" ? "[g]" : "[p]";
 
         for (const cmd of discoverCommands(dir, dir, "")) {
+            const owner = foreignOwners.get(cmd.name);
+            if (owner !== undefined) {
+                report.skipped.push({ name: cmd.name, path: cmd.path, owner });
+                continue;
+            }
+
+            owned?.add(cmd.name);
+            report.registered.push({ name: cmd.name, path: cmd.path });
             const fallback = `Claude command: ${cmd.name}`;
             pi.registerCommand(cmd.name, {
                 description: `${tag} ${cmd.description || fallback}`,
@@ -195,6 +221,39 @@ export function registerCommands(pi: CommandRegistrar, options: { cwd: string; a
             });
         }
     }
+
+    if (!foreignOwners.has(REPORT_COMMAND)) {
+        owned?.add(REPORT_COMMAND);
+        pi.registerCommand(REPORT_COMMAND, {
+            description: "List Claude commands that were registered and those skipped as duplicates",
+            handler: async (_args, ctx) => {
+                ctx.ui.notify(formatReport(report), "info");
+            },
+        });
+    }
+}
+
+const REPORT_COMMAND = "claude-commands";
+
+interface RegistrationReport {
+    registered: { name: string; path: string }[];
+    skipped: { name: string; path: string; owner: string }[];
+}
+
+function formatReport(report: RegistrationReport): string {
+    const lines = [`Claude commands: ${report.registered.length} registered, ${report.skipped.length} skipped`];
+
+    if (report.registered.length > 0) {
+        lines.push("", "Registered:");
+        for (const cmd of report.registered) lines.push(`  /${cmd.name} - ${cmd.path}`);
+    }
+
+    if (report.skipped.length > 0) {
+        lines.push("", "Skipped, name already taken:");
+        for (const cmd of report.skipped) lines.push(`  /${cmd.name} - ${cmd.path} (owned by ${cmd.owner})`);
+    }
+
+    return lines.join("\n");
 }
 
 /**
@@ -202,7 +261,9 @@ export function registerCommands(pi: CommandRegistrar, options: { cwd: string; a
  * "session_start" covers any host that starts a session without a discovery pass.
  */
 export function activate(pi: ExtensionAPI, resolveAgentDir: () => string | Promise<string>): void {
-    const refresh = async (cwd: string) => registerCommands(pi, { cwd, agentDir: await resolveAgentDir() });
+    // Names this instance owns, so later passes refresh them instead of reading them as a clash.
+    const owned = new Set<string>();
+    const refresh = async (cwd: string) => registerCommands(pi, { cwd, agentDir: await resolveAgentDir(), owned });
 
     pi.on("resources_discover", async (event) => {
         await refresh(event.cwd);
