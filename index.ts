@@ -12,13 +12,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { discoverCommands } from "./src/command-files.ts";
-import { parseCommandDirs, resolveCommandDirs } from "./src/command-dirs.ts";
-import { parseFrontmatter } from "./src/frontmatter.ts";
 import { registerCommands } from "./src/registration.ts";
 import { REPORT_CHANNEL, type RegistrationReport } from "./src/report.ts";
-
-export { discoverCommands, parseCommandDirs, parseFrontmatter, registerCommands, resolveCommandDirs };
 
 /**
  * Refresh on both events: pi re-emits "resources_discover" on /reload and on session switches, and
