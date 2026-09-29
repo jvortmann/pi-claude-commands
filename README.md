@@ -84,7 +84,24 @@ Analyze the given Jira ticket and create a comprehensive implementation plan.
 /jira/plan AUD-2157
 ```
 
-The `description` field from frontmatter is used for autocomplete hints. Arguments passed after the command name are appended to the prompt.
+Autocomplete shows the `description` field from frontmatter. An optional `argument-hint`, such as
+`"<ticket-id> [priority]"`, shows after the description.
+
+### Arguments
+
+The command body takes the same placeholders as Claude Code commands and pi prompt templates:
+
+| Placeholder | Result |
+|---|---|
+| `$1`, `$2`, … | One argument |
+| `$ARGUMENTS` or `$@` | All arguments, with spaces between them |
+| `${1:-default}` | The first argument, or the default when it is missing |
+| `${@:-default}` | All arguments, or the default when there are none |
+| `${@:N}` | The arguments from position `N` |
+| `${@:N:L}` | `L` arguments from position `N` |
+
+Quotes keep words together, so `/review "API compatibility"` gives one argument. A body without
+placeholders gets the arguments added after it.
 
 ## Name clashes
 

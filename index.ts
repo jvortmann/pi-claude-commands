@@ -23,20 +23,30 @@ interface CommandFile {
     path: string;
     /** Parsed description from frontmatter */
     description: string;
+    /** The arguments the command expects, such as "<ticket-id> [priority]" */
+    argumentHint: string;
 }
 
-export function parseFrontmatter(content: string): { description: string; body: string } {
+export function parseFrontmatter(content: string): { description: string; argumentHint: string; body: string } {
     const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-    if (!match) return { description: "", body: content };
+    if (!match) return { description: "", argumentHint: "", body: content };
 
     const frontmatter = match[1];
     const body = match[2];
 
     const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
+    const hintMatch = frontmatter.match(/^argument-hint:\s*(.+)$/m);
     return {
         description: descMatch?.[1]?.trim() ?? "",
+        argumentHint: unquote(hintMatch?.[1]?.trim() ?? ""),
         body,
     };
+}
+
+/** Claude Code files write the hint both with and without YAML quotes around it. */
+function unquote(value: string): string {
+    const quoted = /^(["'])(.*)\1$/.exec(value);
+    return quoted ? quoted[2] : value;
 }
 
 export function discoverCommands(baseDir: string, currentDir: string, prefix: string): CommandFile[] {
@@ -56,12 +66,13 @@ export function discoverCommands(baseDir: string, currentDir: string, prefix: st
             const name = basename(entry.name, extname(entry.name));
             const commandName = prefix ? `${prefix}/${name}` : name;
             const content = readFileSync(entryPath, "utf8");
-            const { description } = parseFrontmatter(content);
+            const { description, argumentHint } = parseFrontmatter(content);
 
             commands.push({
                 name: commandName,
                 path: entryPath,
                 description,
+                argumentHint,
             });
         } else if (entry.isDirectory() || entry.isSymbolicLink()) {
             try {
@@ -165,6 +176,68 @@ function findForeignOwners(pi: CommandRegistrar, owned: Set<string>): Map<string
     return owners;
 }
 
+/**
+ * Fills the argument placeholders that Claude Code commands and pi prompt templates share. A body
+ * without placeholders gets the arguments added after it.
+ */
+function buildPrompt(body: string, args: string): string {
+    if (!PLACEHOLDER.test(body)) return args ? `${body}\n\nUser: ${args}` : body;
+
+    const values = splitArguments(args);
+    const all = values.join(" ");
+    return body.replace(
+        new RegExp(PLACEHOLDER, "g"),
+        (_match, defaultOf?: string, fallback?: string, sliceStart?: string, sliceLength?: string, name?: string) => {
+            if (defaultOf !== undefined) {
+                const value = defaultOf === "@" || defaultOf === "ARGUMENTS" ? all : values[Number(defaultOf) - 1];
+                return value || fallback!;
+            }
+            if (sliceStart !== undefined) {
+                // Positions count from 1, and bash reads 0 as 1.
+                const start = Math.max(Number(sliceStart) - 1, 0);
+                const end = sliceLength === undefined ? undefined : start + Number(sliceLength);
+                return values.slice(start, end).join(" ");
+            }
+            if (name === "@" || name === "ARGUMENTS") return all;
+            return values[Number(name) - 1] ?? "";
+        },
+    );
+}
+
+/**
+ * The placeholders that pi prompt templates support. The order matches substituteArgs in pi's
+ * core/prompt-templates (0.99.1): a default, a slice, then a plain name or position. The body is
+ * replaced once, so an argument that contains a placeholder stays literal.
+ */
+const PLACEHOLDER = /\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/;
+
+/**
+ * Splits on whitespace, and single or double quotes group words into one argument. Mirrors
+ * parseCommandArgs in pi's core/prompt-templates (0.99.1), which pi does not export.
+ */
+function splitArguments(input: string): string[] {
+    const values: string[] = [];
+    let current = "";
+    let quote: string | undefined;
+
+    for (const char of input) {
+        if (quote) {
+            if (char === quote) quote = undefined;
+            else current += char;
+        } else if (char === '"' || char === "'") {
+            quote = char;
+        } else if (/\s/.test(char)) {
+            if (current) values.push(current);
+            current = "";
+        } else {
+            current += char;
+        }
+    }
+
+    if (current) values.push(current);
+    return values;
+}
+
 function readCommandFile(path: string): string | undefined {
     try {
         return readFileSync(path, "utf8");
@@ -231,7 +304,7 @@ export function registerCommands(
             report.registered.push({ name: cmd.name, path: cmd.path });
             const fallback = `Claude command: ${cmd.name}`;
             pi.registerCommand(cmd.name, {
-                description: `${tag} ${cmd.description || fallback}`,
+                description: [tag, cmd.description || fallback, cmd.argumentHint].filter(Boolean).join(" "),
                 handler: async (args, ctx) => {
                     // Read at invocation so edits apply immediately, which also means the file may
                     // be gone: pi has no way to unregister a command once its file disappears.
@@ -242,7 +315,7 @@ export function registerCommands(
                     }
 
                     const { body } = parseFrontmatter(content);
-                    const prompt = args ? `${body}\n\nUser: ${args}` : body;
+                    const prompt = buildPrompt(body, args);
                     // pi runs commands at once, even mid-run, and rejects a prompt that arrives
                     // then without a delivery mode. pi ignores the mode when the agent is idle.
                     pi.sendUserMessage(prompt, { deliverAs: "followUp" });
