@@ -89,8 +89,8 @@ export function registerCommands(
                         return;
                     }
 
-                    const { body } = parseFrontmatter(content);
-                    const prompt = buildPrompt(body, args);
+                    const { body, argumentNames } = parseFrontmatter(content);
+                    const prompt = buildPrompt(body, args, argumentNames);
                     // pi runs commands at once, even mid-run, and rejects a prompt that arrives
                     // then without a delivery mode. pi ignores the mode when the agent is idle.
                     pi.sendUserMessage(prompt, { deliverAs: "followUp" });

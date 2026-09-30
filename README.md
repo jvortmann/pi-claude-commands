@@ -101,19 +101,31 @@ Autocomplete shows the `description` field from frontmatter. An optional `argume
 
 ### Arguments
 
-The command body takes the same placeholders as Claude Code commands and pi prompt templates:
+The command body fills in arguments the same way Claude Code does. Positions count from 0:
 
 | Placeholder | Result |
 |---|---|
-| `$1`, `$2`, … | One argument |
-| `$ARGUMENTS` or `$@` | All arguments, with spaces between them |
-| `${1:-default}` | The first argument, or the default when it is missing |
+| `$ARGUMENTS` | The text after the command name, as you typed it |
+| `$0`, `$1`, … or `$ARGUMENTS[0]`, `$ARGUMENTS[1]`, … | One argument. With no argument at that position, the placeholder stays as it is |
+| `$name` | The argument at the position of `name` in the `arguments` field. Empty when there is none |
+
+The `arguments` field takes a list, such as `arguments: [issue, branch]`, or names with spaces
+between them, such as `arguments: issue branch`. With that field, `$issue` is the first argument
+and `$branch` the second.
+
+Quotes keep words together, so `/review "API compatibility" high` gives two arguments. When no
+placeholder receives an argument, the arguments go after the body as `ARGUMENTS: <arguments>`, so
+the model still sees them.
+
+pi prompt templates add these forms. They also count from 0:
+
+| Placeholder | Result |
+|---|---|
+| `$@` | All arguments, with one space between them |
+| `${0:-default}` | The first argument, or the default when it is missing |
 | `${@:-default}` | All arguments, or the default when there are none |
 | `${@:N}` | The arguments from position `N` |
 | `${@:N:L}` | `L` arguments from position `N` |
-
-Quotes keep words together, so `/review "API compatibility"` gives one argument. A body without
-placeholders gets the arguments added after it.
 
 ## Name clashes
 
