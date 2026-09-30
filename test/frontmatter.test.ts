@@ -26,4 +26,20 @@ describe("parseFrontmatter", () => {
         assert.equal(result.description, "");
         assert.equal(result.body, "Body here");
     });
+
+    it("reads an empty description as empty instead of taking the next line", () => {
+        const content = "---\ndescription:\nargument-hint: <ticket-id>\n---\nBody here";
+        const result = parseFrontmatter(content);
+
+        assert.equal(result.description, "");
+        assert.equal(result.argumentHint, "<ticket-id>");
+    });
+
+    it("reads an empty argument hint as empty instead of taking the next line", () => {
+        const content = "---\nargument-hint:\ndescription: Plan a ticket\n---\nBody here";
+        const result = parseFrontmatter(content);
+
+        assert.equal(result.argumentHint, "");
+        assert.equal(result.description, "Plan a ticket");
+    });
 });

@@ -10,8 +10,8 @@ export function parseFrontmatter(content: string): {
     const frontmatter = match[1];
     const body = match[2];
 
-    const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
-    const hintMatch = frontmatter.match(/^argument-hint:\s*(.+)$/m);
+    const descMatch = frontmatter.match(/^description:[ \t]*(.+)$/m);
+    const hintMatch = frontmatter.match(/^argument-hint:[ \t]*(.+)$/m);
     const namesMatch = frontmatter.match(/^arguments:[ \t]*(.+)$/m);
     const namesBlock = frontmatter.match(/^arguments:[ \t]*\r?\n((?:[ \t]+-.*(?:\r?\n|$))+)/m);
     return {
