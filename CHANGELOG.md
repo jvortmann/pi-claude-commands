@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.0
+
+### Breaking changes
+
+- The extension needs pi >= 0.79.1, the first release that tells an extension whether the user trusts the project. On older pi the extension loads no commands
+- A command body without placeholders now gets the arguments after it as `ARGUMENTS: <arguments>`, the way Claude Code adds them. Before, the extension wrote `User: <arguments>`
+- `index.ts` now loads its modules from `src/` next to it, so a link to `index.ts` alone no longer loads. Link the directory, or use `pi install` with the checkout directory
+
+### Features
+
+- Fill argument placeholders the way Claude Code does: `$ARGUMENTS` as typed, `$0`, `$1` and `$ARGUMENTS[N]` counted from 0, and `$name` from the `arguments` field. A position with no argument stays as it is
+- Support the extra placeholders of pi prompt templates: `$@`, `${0:-default}`, `${@:-default}`, `${@:N}` and `${@:N:L}`. Their numbers count from 0 as well
+- Show the `argument-hint` from the frontmatter after the description
+
+### Refactoring
+
+- Split `index.ts` into modules under `src/`, one for each concern, with a test file for each module
+- Run the tests with `node --test` instead of `tsx`
+
+### Fixes
+
+- Queue a command that runs while the agent works, and send it when the run ends. Before, pi rejected the prompt and it was lost
+- Load project commands only in a project that the user trusts, the way pi reads project settings. Before, a global install read the project commands in every project
+- Skip the names of pi's own commands, such as `/compact`, `/model` and `/debug`, and list them in `/claude-commands`. Before, such a command registered but never ran in the terminal UI
+- Read an empty `description` or `argument-hint` line as empty. Before, the field took the next line as its value
+
 ## v2.0
 
 ### Breaking changes
